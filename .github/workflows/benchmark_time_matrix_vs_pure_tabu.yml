@@ -61,7 +61,7 @@ jobs:
             --levels "${{ matrix.level }}" \
             --compressions "${{ matrix.compression }}" \
             --iter-per-segment 50 \
-            --segments-per-level 20 \
+            --segments-per-level 1 \
             --runs "${{ github.event.inputs.runs || '1' }}" \
             --timeout-sec "${{ github.event.inputs.timeout_sec || '18000' }}" \
             --outdir "results/gha_bench/${{ steps.group.outputs.slug }}/L${{ matrix.level }}_C${{ matrix.compression }}"
