@@ -78,6 +78,8 @@ int num_nodes = 0;
 double alpha1 = 1.0; // tham số hàm phạt thứ nhất
 double alpha2 = 1.0; // tham số hàm phạt thứ hai
 double Beta = 0.5; // tham số điều chỉnh hệ số hàm phạt
+double MERGE_RATIO = 0.2; // m% số cạnh ứng viên được gom tại mỗi lần coarsen
+double QUALITY_IMPROVEMENT_THRESHOLD = 0.01; // nếu cải thiện < ngưỡng thì ưu tiên coarsen
 
 int MAX_ITER;
 int TABU_TENURE;
@@ -86,6 +88,8 @@ double EPSILON = 1e-6;
 
 // Adaptive parameters
 int SEGMENT_LENGTH;
+const int FIXED_ITER_PER_SEGMENT = 250;   // cố định số vòng lặp cho mỗi segment
+const int FIXED_SEGMENTS_PER_LEVEL = 8;   // cố định số segment cho mỗi level
 vector<string> MOVE_SET = {"1-0", "1-1", "2-0", "2-1", "2-2", "2-opt"};
 vector<double> weights = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
 vector<double> scorePi = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
@@ -140,48 +144,9 @@ void read_dataset(const string &filename){
     file.close();
 
     cout << "Read " << nodes.size() << " nodes (including depot)." << endl;
-    if (nodes.size() > 1000) {
-        // Bộ rất lớn (> 1000)
-        MAX_ITER = 50000;
-        SEGMENT_LENGTH = 5000;
-        MAX_NO_IMPROVE = 500000;
-    }
-    else if (nodes.size() >= 1000) {
-        // Bộ 1000 (501-1000)
-        MAX_ITER = 25000;
-        SEGMENT_LENGTH = 2500;
-        MAX_NO_IMPROVE = 500000;
-    }
-    else if (nodes.size() >= 500) {
-        // Bộ 500 (201-500)
-        MAX_ITER = 12500;
-        SEGMENT_LENGTH = 12500;
-        MAX_NO_IMPROVE = 500000;
-    }
-    else if (nodes.size() >= 200) {
-        // Bộ 200 (101-200)
-        MAX_ITER = 6000;
-        SEGMENT_LENGTH = 600;
-        MAX_NO_IMPROVE = 500000;
-    }
-    else if (nodes.size() >= 100) {
-        // Bộ 100 (100)
-        MAX_ITER = 3000;
-        SEGMENT_LENGTH = 300;
-        MAX_NO_IMPROVE = 500000;
-    }
-    else if (nodes.size() >= 50) {
-        // Bộ 50 (50-99)
-        MAX_ITER = 2000;
-        SEGMENT_LENGTH = 200;
-        MAX_NO_IMPROVE = 500000;
-    }
-    else {
-        // Bộ nhỏ (6-49)
-        MAX_ITER = 500;
-        SEGMENT_LENGTH = 50;
-        MAX_NO_IMPROVE = 500000;
-    }
+    MAX_ITER = FIXED_ITER_PER_SEGMENT * FIXED_SEGMENTS_PER_LEVEL;
+    SEGMENT_LENGTH = FIXED_ITER_PER_SEGMENT;
+    MAX_NO_IMPROVE = 500000;
     for (const auto& node : nodes) {
         if (node.id == depot_id) {
             cout << "Node id: " << node.id << " (depot), x: " << node.x << ", y: " << node.y << endl;
@@ -1519,21 +1484,25 @@ LevelInfo merge_customers(const LevelInfo& current_level, const Solution& best_s
     
     vector<tuple<int,int,int>> candidates = collect_merge_candidates(current_level, best_solution);
     
-    // Tính 20% số CẠNH
-    int num_to_merge = max(1, (int)(candidates.size() * 0.3));
-    
-    //cout << "\n=== MERGING " << num_to_merge << " / " << candidates.size() << " EDGES (20%) ===" << endl;
+    int candidate_count = (int)candidates.size();
+    int num_to_merge = max(1, (int)ceil(candidate_count * MERGE_RATIO));
+
+    //cout << "\n=== MERGING " << num_to_merge << " / " << candidate_count << " CANDIDATE EDGES ===" << endl;
     
     set<int> merged_nodes;
     vector<vector<int>> merged_groups;
     
-    for (int i = 0; i < num_to_merge && i < candidates.size(); i++) {
+    for (int i = 0; i < (int)candidates.size(); i++) {
         int frequency = get<0>(candidates[i]);
         int node_a = get<1>(candidates[i]);
         int node_b = get<2>(candidates[i]);
 
         if (node_a == depot_id || node_b == depot_id) {
             continue;
+        }
+
+        if (i >= num_to_merge) {
+            break;
         }
         
         bool already_merged_together = false;
@@ -1958,6 +1927,14 @@ Solution unmerge_solution_to_previous_level(const Solution& coarse_sol, const Le
     return fine_sol;
 }
 
+bool should_coarsen_level(double previous_fitness, double current_fitness, int level_id) {
+    if (level_id == 0) return true; // luôn coarsen sau level đầu để tạo phân cấp
+    if (previous_fitness <= EPSILON) return true;
+
+    double relative_improvement = (previous_fitness - current_fitness) / max(previous_fitness, EPSILON);
+    return relative_improvement <= QUALITY_IMPROVEMENT_THRESHOLD;
+}
+
 Solution multilevel_tabu_search() {
     auto total_start = chrono::high_resolution_clock::now();
     Solution s = init_greedy_solution();
@@ -1994,13 +1971,26 @@ Solution multilevel_tabu_search() {
         auto level_start = chrono::high_resolution_clock::now();   
         update_node_index_cache(all_levels[L]);
         Solution s_current = tabu_search(s, &all_levels[L], true);
-        update_edge_frequency(s);
+        update_edge_frequency(s_current);
         auto level_end = chrono::high_resolution_clock::now();
         double level_time = chrono::duration<double>(level_end - level_start).count();
         print_solution(s_current);
-        if (L >= 3 && s_current.fitness == prev_fitness) {
+
+        double improvement_ratio = (prev_fitness == DBL_MAX)
+            ? 1.0
+            : (prev_fitness - s_current.fitness) / max(prev_fitness, EPSILON);
+        cout << "Level " << L << " improvement ratio: " << fixed << setprecision(6)
+             << improvement_ratio * 100.0 << "%" << endl;
+
+        bool trigger_coarsen = should_coarsen_level(prev_fitness, s_current.fitness, L);
+        if (!trigger_coarsen) {
+            cout << "Good improvement, skip coarsening at level " << L << endl;
+            prev_fitness = s_current.fitness;
+            s = s_current;
+            edge_frequency.clear();
             break;
         }
+
         prev_fitness = s_current.fitness;
         s = s_current;
         auto merge_start = chrono::high_resolution_clock::now();
@@ -2206,6 +2196,7 @@ int main(int argc, char* argv[]) {
     read_dataset(dataset_path);
     printf("MAX_ITER: %d\n", MAX_ITER);
     printf("Segment length: %d\n", SEGMENT_LENGTH);
+    printf("Segments/level (fixed): %d\n", FIXED_SEGMENTS_PER_LEVEL);
  
     // Khởi tạo danh sách xe 
     vehicles.clear();
