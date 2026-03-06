@@ -1,6 +1,12 @@
 name: Benchmark Time-Matrix vs Pure Tabu
 
 on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
   workflow_dispatch:
     inputs:
       instance_groups_json:
