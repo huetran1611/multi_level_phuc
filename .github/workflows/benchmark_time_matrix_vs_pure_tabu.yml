@@ -1,0 +1,121 @@
+name: Benchmark Time-Matrix vs Pure Tabu
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance_groups_json:
+        description: "Danh sach glob theo job (JSON array), vd: [\"instances/n1.*.txt\",\"instances/n2.*.txt\"]"
+        required: true
+        default: '["instances/50.10.1.txt", "instances/50.10.2.txt", "instances/50.10.3.txt", "instances/50.10.4.txt"]'
+      runs:
+        description: "Số lần chạy mỗi cấu hình"
+        required: true
+        default: "1"
+      timeout_sec:
+        description: "Timeout mỗi lần chạy (giây)"
+        required: true
+        default: "18000"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: G${{ matrix.instance_group }} L${{ matrix.level }} C${{ matrix.compression }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        instance_group: ${{ fromJson(github.event.inputs.instance_groups_json) }}
+        level: [3,4, 5, 6, 7, 8]
+        compression: [5, 10, 15, 20]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ python3
+
+      - name: Build group slug
+        id: group
+        run: |
+          GROUP="${{ matrix.instance_group }}"
+          SLUG=$(echo "$GROUP" | sed 's|^instances/||' | sed 's|\.txt$||' | sed 's|[^a-zA-Z0-9._-]|_|g')
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+
+      - name: Run benchmark pair
+        run: |
+          python3 scripts/benchmark_time_matrix_vs_tabu.py \
+            --instances-glob "${{ matrix.instance_group }}" \
+            --levels "${{ matrix.level }}" \
+            --compressions "${{ matrix.compression }}" \
+            --iter-per-segment 50 \
+            --segments-per-level 20 \
+            --runs "${{ github.event.inputs.runs }}" \
+            --timeout-sec "${{ github.event.inputs.timeout_sec }}" \
+            --outdir "results/gha_bench/${{ steps.group.outputs.slug }}/L${{ matrix.level }}_C${{ matrix.compression }}"
+
+      - name: Upload per-config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ steps.group.outputs.slug }}-L${{ matrix.level }}-C${{ matrix.compression }}
+          path: results/gha_bench/${{ steps.group.outputs.slug }}/L${{ matrix.level }}_C${{ matrix.compression }}
+          retention-days: 14
+
+  aggregate:
+    name: Aggregate Results
+    runs-on: ubuntu-latest
+    needs: benchmark
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: merged_artifacts
+
+      - name: Merge CSV files
+        run: |
+          python3 - <<'PY'
+          import csv
+          import glob
+          import os
+          from pathlib import Path
+
+          out_dir = Path("merged_artifacts/final")
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          def merge(pattern, out_name):
+              files = sorted(glob.glob(pattern, recursive=True))
+              if not files:
+                  return
+              header = None
+              rows = []
+              for fp in files:
+                  with open(fp, newline='', encoding='utf-8') as f:
+                      reader = csv.DictReader(f)
+                      if header is None:
+                          header = reader.fieldnames
+                      for r in reader:
+                          rows.append(r)
+              with open(out_dir / out_name, 'w', newline='', encoding='utf-8') as f:
+                  w = csv.DictWriter(f, fieldnames=header)
+                  w.writeheader()
+                  w.writerows(rows)
+
+          merge("merged_artifacts/**/raw_*.csv", "all_raw.csv")
+          merge("merged_artifacts/**/summary_*.csv", "all_summary.csv")
+          merge("merged_artifacts/**/compare_*.csv", "all_compare.csv")
+          print("Wrote merged CSVs to", out_dir)
+          PY
+
+      - name: Upload merged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-merged
+          path: merged_artifacts/final
+          retention-days: 30

@@ -98,6 +98,7 @@ int MAX_LEVELS = 4;
 int ITER_PER_SEGMENT = -1;
 int SEGMENTS_PER_LEVEL = -1;
 bool USE_MANUAL_SEGMENT_CONFIG = false;
+double MERGE_RATIO = 0.30;
 
 // Adaptive parameters
 int SEGMENT_LENGTH;
@@ -1579,8 +1580,8 @@ LevelInfo merge_customers(const LevelInfo& current_level,
     
     vector<tuple<int,int,int>> candidates = collect_merge_candidates(current_level, best_solution);
     
-    // Tính 20% số CẠNH
-    int num_to_merge = max(1, (int)(candidates.size() * 0.3));
+    // Số cạnh được chọn để merge theo tỉ lệ nén cấu hình
+    int num_to_merge = max(1, (int)(candidates.size() * MERGE_RATIO));
     
     //cout << "\n=== MERGING " << num_to_merge << " / " << candidates.size() << " EDGES (20%) ===" << endl;
     
@@ -2268,6 +2269,14 @@ int main(int argc, char* argv[]) {
         USE_MANUAL_SEGMENT_CONFIG = true;
     }
 
+    if (argc > 5) {
+        double ratio_arg = atof(argv[5]);
+        if (ratio_arg > 1.0) {
+            ratio_arg /= 100.0;
+        }
+        MERGE_RATIO = min(0.95, max(0.01, ratio_arg));
+    }
+
     read_dataset(dataset_path);
     if (!USE_MANUAL_SEGMENT_CONFIG) {
         ITER_PER_SEGMENT = SEGMENT_LENGTH;
@@ -2278,6 +2287,7 @@ int main(int argc, char* argv[]) {
     cout << "MAX_LEVELS: " << MAX_LEVELS << endl;
     cout << "ITER_PER_SEGMENT: " << ITER_PER_SEGMENT << endl;
     cout << "SEGMENTS_PER_LEVEL: " << SEGMENTS_PER_LEVEL << endl;
+    cout << "MERGE_RATIO: " << (MERGE_RATIO * 100.0) << "%" << endl;
     cout << "MAX_ITER (= iter/segment * segments/level): " << MAX_ITER << endl;
 
     printf("MAX_ITER: %d\n", MAX_ITER);

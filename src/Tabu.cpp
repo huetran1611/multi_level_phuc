@@ -42,9 +42,14 @@ struct TabuMove {
 };
 
 vector<vector<double>> distances;
+vector<vector<double>> truck_times;
+vector<vector<double>> drone_times;
 vector<Node> C1; // customers served only by technicians
 vector<Node> C2; // customers served by drones or technicians
 vector<VehicleFamily> vehicles;
+
+constexpr double TRUCK_SPEED = 0.58;
+constexpr double DRONE_SPEED = 0.83;
 
 int depot_id = 0;
 int num_nodes = 0;
@@ -92,8 +97,26 @@ void update_weights(){
     }
 }
 
+void build_time_matrices_from_distance(const vector<vector<double>>& distance_matrix,
+                                       vector<vector<double>>& truck_time_matrix,
+                                       vector<vector<double>>& drone_time_matrix) {
+    const int n = static_cast<int>(distance_matrix.size());
+    truck_time_matrix.assign(n, vector<double>(n, 0.0));
+    drone_time_matrix.assign(n, vector<double>(n, 0.0));
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            if (i == j) continue;
+            truck_time_matrix[i][j] = distance_matrix[i][j] / TRUCK_SPEED;
+            drone_time_matrix[i][j] = distance_matrix[i][j] / DRONE_SPEED;
+        }
+    }
+}
+
 void read_dataset(const string &filename){
     vector<Node> nodes;
+    C1.clear();
+    C2.clear();
     ifstream file(filename);
     if (!file.is_open()){
         cerr << "Error opening file: " << filename <<endl;
@@ -169,6 +192,8 @@ void read_dataset(const string &filename){
         }
     }
 
+    build_time_matrices_from_distance(distances, truck_times, drone_times);
+
     // Phân loại khách hàng
     for (const auto& node : nodes){
         if (node.id == depot_id) continue;
@@ -222,6 +247,7 @@ void evaluate_solution(Solution &sol) {
     sol.is_feasible = true;
 
     for (size_t i = 0; i < sol.route.size(); i++){
+        const vector<vector<double>>& time_matrix = vehicles[i].is_drone ? drone_times : truck_times;
         int prev = depot_id;
         double current_time = 0;
         double depart_time = 0;
@@ -232,8 +258,7 @@ void evaluate_solution(Solution &sol) {
             
             if (cid == depot_id){
                 if (prev != depot_id){
-                    double travel_distance = distances[prev][depot_id];
-                    current_time += travel_distance / vehicles[i].speed;
+                    current_time += time_matrix[prev][depot_id];
                 }
                 
                 double arrival_depot = current_time;
@@ -264,12 +289,12 @@ void evaluate_solution(Solution &sol) {
                 prev = depot_id;
             } else {
                 // Di chuyển từ prev đến customer cid
-                double travel_distance = distances[prev][cid];
-                double entry_time = current_time + (travel_distance / vehicles[i].speed);
+                double travel_time = time_matrix[prev][cid];
+                double entry_time = current_time + travel_time;
                 
                 served_in_trip.push_back({cid, entry_time});
                 
-                current_time += travel_distance / vehicles[i].speed;
+                current_time += travel_time;
                 prev = cid;
             }
         }
@@ -336,13 +361,14 @@ Solution init_greedy_solution() {
 
     while (!unserved_C2.empty()) {
         for (size_t v = 0; v < vehicles.size(); v++) {
-            double best_dist = DBL_MAX;
+            double best_time = DBL_MAX;
             int best_idx = -1;
+            const vector<vector<double>>& time_matrix = vehicles[v].is_drone ? drone_times : truck_times;
             for (size_t i = 0; i < unserved_C2.size(); i++) {
                 int cid = unserved_C2[i];
-                double d = distances[current_pos[v]][cid];
-                if (d < best_dist) {
-                    best_dist = d;
+                double t = time_matrix[current_pos[v]][cid];
+                if (t < best_time) {
+                    best_time = t;
                     best_idx = i;
                 }
             }
