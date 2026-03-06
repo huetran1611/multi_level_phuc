@@ -56,15 +56,23 @@ struct MergedNodeInfo {
     int merged_node_id;
     vector<int> original_sequence;  // Thứ tự nodes trong group: [17, 13, 15]
     vector<int> current_sequence;   // Sequence ở level hiện tại
+    vector<int> forward_sequence;   // Sequence forward cố định
+    vector<int> reverse_sequence;   // Sequence reverse đã precompute
     double internal_distance;       // Tổng distance bên trong
     vector<double> cumulative_distances;
+    vector<double> cumulative_distances_forward;
+    vector<double> cumulative_distances_reverse;
     int entry_node_original;                 // Node đầu tiên (entry point)
     int exit_node_original;                  // Node cuối cùng (exit point)
     int entry_node;
     int exit_node;
+    int entry_node_forward;
+    int exit_node_forward;
+    int entry_node_reverse;
+    int exit_node_reverse;
     int level_id;
     
-    MergedNodeInfo() : merged_node_id(-1), internal_distance(0.0), entry_node_original(-1), exit_node_original(-1), entry_node(-1), exit_node(-1), level_id(-1) {}
+    MergedNodeInfo() : merged_node_id(-1), internal_distance(0.0), entry_node_original(-1), exit_node_original(-1), entry_node(-1), exit_node(-1), entry_node_forward(-1), exit_node_forward(-1), entry_node_reverse(-1), exit_node_reverse(-1), level_id(-1) {}
 };
 
 vector<vector<double>> distances;
@@ -274,6 +282,8 @@ void normalize_route(vector<int> &route) {
 
 map<int, double> internal_distance_cache;
 
+void evaluate_solution(Solution &sol, const LevelInfo *current_level);
+
 double get_limit_wait_for_node(int node_id, const LevelInfo *current_level = nullptr) {
     if (current_level != nullptr) {
         int idx = find_node_index_fast(node_id);
@@ -290,6 +300,98 @@ double get_limit_wait_for_node(int node_id, const LevelInfo *current_level = nul
     }
 
     return 60.0;
+}
+
+bool is_reversible_merged_node(int node_id, const LevelInfo *current_level) {
+    if (current_level == nullptr || node_id == depot_id) return false;
+    auto map_it = current_level->node_mapping.find(node_id);
+    if (map_it == current_level->node_mapping.end() || map_it->second.size() <= 1) return false;
+    auto info_it = merged_nodes_info.find(node_id);
+    if (info_it == merged_nodes_info.end()) return false;
+    return info_it->second.current_sequence.size() > 1;
+}
+
+Solution evaluate_with_reversed_node(const Solution& base_sol, int node_id, const LevelInfo *current_level) {
+    Solution candidate = base_sol;
+    if (!is_reversible_merged_node(node_id, current_level)) {
+        return candidate;
+    }
+
+    auto info_it = merged_nodes_info.find(node_id);
+    if (info_it == merged_nodes_info.end()) return candidate;
+
+    MergedNodeInfo& info = info_it->second;
+
+    vector<int> original_sequence = info.current_sequence;
+    vector<double> original_cumulative = info.cumulative_distances;
+    int original_entry = info.entry_node;
+    int original_exit = info.exit_node;
+
+    int idx = find_node_index_fast(node_id);
+    vector<double> original_row;
+    vector<double> original_col;
+    bool patched_matrix = false;
+
+    if (idx != -1 && idx < (int)distances.size()) {
+        int n = (int)distances.size();
+        original_row.resize(n);
+        original_col.resize(n);
+        for (int j = 0; j < n; j++) {
+            original_row[j] = distances[idx][j];
+            original_col[j] = distances[j][idx];
+        }
+    }
+
+    info.current_sequence = info.reverse_sequence;
+    info.cumulative_distances = info.cumulative_distances_reverse;
+    info.entry_node = info.entry_node_reverse;
+    info.exit_node = info.exit_node_reverse;
+
+    if (idx != -1 && idx < (int)distances.size()) {
+        int n = (int)distances.size();
+        for (int j = 0; j < n; j++) {
+            distances[idx][j] = original_col[j];
+            distances[j][idx] = original_row[j];
+        }
+        distances[idx][idx] = 0.0;
+        patched_matrix = true;
+    }
+
+    evaluate_solution(candidate, current_level);
+
+    info.current_sequence = original_sequence;
+    info.cumulative_distances = original_cumulative;
+    info.entry_node = original_entry;
+    info.exit_node = original_exit;
+
+    if (patched_matrix) {
+        int n = (int)distances.size();
+        for (int j = 0; j < n; j++) {
+            distances[idx][j] = original_row[j];
+            distances[j][idx] = original_col[j];
+        }
+        distances[idx][idx] = 0.0;
+    }
+
+    return candidate;
+}
+
+Solution improve_with_orientation_trials(const Solution& base_sol, const vector<int>& moved_nodes, const LevelInfo *current_level) {
+    if (current_level == nullptr) return base_sol;
+
+    Solution best = base_sol;
+    unordered_set<int> seen;
+    for (int node_id : moved_nodes) {
+        if (node_id == depot_id) continue;
+        if (!seen.insert(node_id).second) continue;
+        if (!is_reversible_merged_node(node_id, current_level)) continue;
+
+        Solution reversed_candidate = evaluate_with_reversed_node(base_sol, node_id, current_level);
+        if (reversed_candidate.fitness < best.fitness - EPSILON) {
+            best = reversed_candidate;
+        }
+    }
+    return best;
 }
 
 void evaluate_solution(Solution &sol, const LevelInfo *current_level = nullptr) {
@@ -694,6 +796,7 @@ Solution move_1_0(Solution current_sol, size_t v1, size_t pos1, size_t v2, size_
     }
     
     evaluate_solution(new_sol, current_level);
+    new_sol = improve_with_orientation_trials(new_sol, {cid}, current_level);
     return new_sol;
 }
 
@@ -704,6 +807,7 @@ Solution move_1_1(Solution current_sol, size_t v1, size_t node1, size_t v2, size
     if (cid1 == depot_id || cid2 == depot_id) return current_sol; // không di chuyển depot
     swap(new_sol.route[v1][node1], new_sol.route[v2][node2]);
     evaluate_solution(new_sol, current_level);
+    new_sol = improve_with_orientation_trials(new_sol, {cid1, cid2}, current_level);
     return new_sol;
 }
 
@@ -794,6 +898,7 @@ Solution move_2_1(Solution current_sol, size_t v1, size_t pos1, size_t v2, size_
     new_sol.route[v2].insert(new_sol.route[v2].begin() + pos2 + 1, cid2);
 
     evaluate_solution(new_sol, current_level);
+    new_sol = improve_with_orientation_trials(new_sol, {cid1, cid2, cid3}, current_level);
     return new_sol;
 }
 
@@ -1681,6 +1786,7 @@ LevelInfo merge_customers(const LevelInfo& current_level, const Solution& best_s
             info.merged_node_id = merged_node.id;
             info.level_id = next_level.level_id;
             info.current_sequence = group;
+            info.forward_sequence = group;
             info.entry_node = group.front();
             info.exit_node = group.back();
             info.internal_distance = 0.0;
@@ -1711,6 +1817,27 @@ LevelInfo merge_customers(const LevelInfo& current_level, const Solution& best_s
             if (it_exit != merged_nodes_info.end()) {
                 info.internal_distance += it_exit->second.internal_distance;
             }
+
+            // Precompute metadata cho 2 orientation (forward/reverse).
+            info.cumulative_distances_forward = info.cumulative_distances;
+            info.entry_node_forward = info.forward_sequence.front();
+            info.exit_node_forward = info.forward_sequence.back();
+
+            info.reverse_sequence = info.forward_sequence;
+            reverse(info.reverse_sequence.begin(), info.reverse_sequence.end());
+            info.cumulative_distances_reverse.assign(info.cumulative_distances_forward.size(), 0.0);
+            for (size_t k = 0; k < info.cumulative_distances_forward.size(); k++) {
+                size_t old_idx = info.cumulative_distances_forward.size() - 1 - k;
+                info.cumulative_distances_reverse[k] = max(0.0, info.internal_distance - info.cumulative_distances_forward[old_idx]);
+            }
+            info.entry_node_reverse = info.reverse_sequence.front();
+            info.exit_node_reverse = info.reverse_sequence.back();
+
+            // Mặc định giữ orientation hiện tại là forward.
+            info.current_sequence = info.forward_sequence;
+            info.cumulative_distances = info.cumulative_distances_forward;
+            info.entry_node = info.entry_node_forward;
+            info.exit_node = info.exit_node_forward;
             //cout << "Internal distances for merged node " << merged_node.id << ": " << info.internal_distance << endl; 
             
             // ánh xạ node merge về toàn bộ node gốc

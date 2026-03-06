@@ -1186,12 +1186,32 @@ Solution tabu_search(){
 
 int main(int argc, char* argv[]){
     string dataset_path;
+    int manual_iter_per_segment = -1;
+    int manual_total_segments = -1;
+
     if (argc > 1) {
         dataset_path = argv[1];
     } else {
         dataset_path = "D:\\New folder\\instances\\10.5.2.txt"; 
     }
+
+    if (argc > 3) {
+        manual_iter_per_segment = max(1, atoi(argv[2]));
+        manual_total_segments = max(1, atoi(argv[3]));
+    }
+
     read_dataset(dataset_path);
+
+    if (manual_iter_per_segment > 0 && manual_total_segments > 0) {
+        SEGMENT_LENGTH = manual_iter_per_segment;
+        MAX_ITER = manual_iter_per_segment * manual_total_segments;
+    }
+
+    cout << "\n=== CONFIGURATION ===" << endl;
+    cout << "ITER_PER_SEGMENT: " << SEGMENT_LENGTH << endl;
+    cout << "TOTAL_SEGMENTS: " << max(1, MAX_ITER / max(1, SEGMENT_LENGTH)) << endl;
+    cout << "MAX_ITER: " << MAX_ITER << endl;
+
     printf(" %d\n", MAX_ITER);
  
     // Khởi tạo danh sách xe 
