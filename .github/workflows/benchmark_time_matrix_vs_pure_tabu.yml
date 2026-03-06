@@ -34,7 +34,7 @@ jobs:
       fail-fast: false
       max-parallel: 10
       matrix:
-        instance_group: ${{ fromJson(github.event.inputs.instance_groups_json) }}
+        instance_group: ${{ fromJson(github.event.inputs.instance_groups_json || '["instances/50.10.1.txt","instances/50.10.2.txt","instances/50.10.3.txt","instances/50.10.4.txt"]') }}
         level: [3,4, 5, 6, 7, 8]
         compression: [5, 10, 15, 20]
 
@@ -62,8 +62,8 @@ jobs:
             --compressions "${{ matrix.compression }}" \
             --iter-per-segment 50 \
             --segments-per-level 20 \
-            --runs "${{ github.event.inputs.runs }}" \
-            --timeout-sec "${{ github.event.inputs.timeout_sec }}" \
+            --runs "${{ github.event.inputs.runs || '1' }}" \
+            --timeout-sec "${{ github.event.inputs.timeout_sec || '18000' }}" \
             --outdir "results/gha_bench/${{ steps.group.outputs.slug }}/L${{ matrix.level }}_C${{ matrix.compression }}"
 
       - name: Upload per-config artifact
