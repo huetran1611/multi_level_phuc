@@ -159,13 +159,13 @@ void read_dataset(const string &filename){
     }
     else if (nodes.size() >= 100) {
         // Bộ 100 (100)
-        MAX_ITER = 24000;
-        SEGMENT_LENGTH = 300;
+        MAX_ITER = 8000;
+        SEGMENT_LENGTH = 100;
     }
     else if (nodes.size() >= 50) {
         // Bộ 50 (50-99)
-        MAX_ITER = 16000;
-        SEGMENT_LENGTH = 200;
+        MAX_ITER = 4000;
+        SEGMENT_LENGTH = 50;
     }
     else {
         // Bộ nhỏ (6-49)
@@ -1218,7 +1218,7 @@ int main(int argc, char* argv[]){
     if (argc > 1) {
         dataset_path = argv[1];
     } else {
-        dataset_path = "D:\\New folder\\instances\\10.5.2.txt"; 
+        dataset_path = "D:\\New folder\\instances\\50.40.1.txt"; 
     }
 
     if (argc > 3) {
