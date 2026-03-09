@@ -5,7 +5,6 @@ struct Node {
     int id;
     double x,y;
     double c1_or_c2;
-    double limit_wait = 60.0; // (phút)
 };
 
 struct VehicleFamily {
@@ -122,7 +121,7 @@ void read_dataset(const string &filename){
         cerr << "Error opening file: " << filename <<endl;
         exit(1);
     }
-    nodes.push_back({depot_id,0.0,0.0,-1.0,DBL_MAX}); // depot
+    nodes.push_back({depot_id,0.0,0.0,-1.0}); // depot
     string line;
     while (getline(file,line)){
         if (line.empty() || line[0] == '#'|| isalpha(line[0])) continue;
@@ -178,7 +177,7 @@ void read_dataset(const string &filename){
             continue;
         } else {
             cout << "Node id: " << node.id << ", x: " << node.x << ", y: " << node.y
-                 << ", type: " << (node.c1_or_c2 > 0 ? "C2" : "C1") << ", limit_wait: " << node.limit_wait << endl;
+                 << ", type: " << (node.c1_or_c2 > 0 ? "C2" : "C1") << endl;
         }
     }
 
@@ -269,8 +268,8 @@ void evaluate_solution(Solution &sol) {
                     sol.drone_violation += (flight_time - vehicles[i].limit_drone);
                 }
                 
-                // Kiểm tra vi phạm thời gian chờ của các khách hàng đã phục vụ
-                for (auto &p : served_in_trip){
+                // Kiểm tra vi phạm thời gian chờ của các khách hàng đã phục vụ - DISABLED
+                /*for (auto &p : served_in_trip){
                     int served_node_id = p.first;
                     double time_arrived_at_node = p.second;
                     
@@ -278,9 +277,9 @@ void evaluate_solution(Solution &sol) {
                     if (!C2.empty() && wait_time > C2[0].limit_wait) {
                         sol.waiting_violation += (wait_time - C2[0].limit_wait);
                     }
-                }
+                }*/
                 
-                if (sol.drone_violation > 0 || sol.waiting_violation > 0) {
+                if (sol.drone_violation > 0) {
                     sol.is_feasible = false;
                 }
                 
@@ -301,7 +300,7 @@ void evaluate_solution(Solution &sol) {
         sol.makespan = max(sol.makespan, current_time);
     }
 
-    sol.fitness = sol.makespan + alpha1*sol.drone_violation + alpha2*sol.waiting_violation;
+    sol.fitness = sol.makespan + alpha1*sol.drone_violation; // + alpha2*sol.waiting_violation; // Removed waiting violation
 }
 
 Solution init_greedy_solution() {
